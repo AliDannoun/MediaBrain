@@ -539,6 +539,8 @@
       <span id="drive-label">Drive</span>
     </div>
     <button class="btn btn-ghost btn-sm" id="btn-export" style="display:none" onclick="exportJSON()">↓ Exportar</button>
+    <button class="btn btn-ghost btn-sm" id="btn-import" style="display:none" onclick="document.getElementById('import-file-input').click()">↑ Importar</button>
+    <input type="file" id="import-file-input" accept="application/json" style="display:none" onchange="importJSON(event)">
     <button class="btn btn-primary" id="btn-add" style="display:none" onclick="openSearchModal()">+ Añadir</button>
   </div>
 </header>
@@ -649,6 +651,7 @@ const CLIENT_ID = ''; // No se necesita para el flujo actual
 const SCOPES = 'https://www.googleapis.com/auth/drive.file';
 const FILENAME = 'watchlist-data.json';
 
+
 let TMDB_KEY = '';
 let tokenClient;
 let accessToken = '';
@@ -710,11 +713,13 @@ async function onAuthenticated() {
   document.getElementById('app').style.display = 'block';
   document.getElementById('btn-add').style.display = '';
   document.getElementById('btn-export').style.display = '';
+  document.getElementById('btn-import').style.display = '';
   document.getElementById('drive-status').style.display = 'flex';
   setDriveStatus('ok', 'Conectado');
   await loadFromDrive();
   renderGrid();
 }
+
 
 // ─── DRIVE ────────────────────────────────────────────────────────
 function setDriveStatus(state, label) {
@@ -905,6 +910,15 @@ function openDetailModal(entry, isNew=false) {
   const typeTag = `<span class="tag tag-accent">${TYPE_LABELS[entry.mediaType] || entry.mediaType}</span>`;
   const yearTag = entry.year ? `<span class="tag">${entry.year}</span>` : '';
   const dirTag = entry.director ? `<span class="tag">Dir. ${escapeHTML(entry.director)}</span>` : '';
+  const seasonsTag = entry.seasons ? `<span class="tag">${entry.seasons} temporada${entry.seasons > 1 ? 's' : ''}</span>` : '';
+  const sagaTag = entry.franchise ? `<span class="tag">${escapeHTML(entry.franchise)}</span>` : '';
+  const countryTag = entry.country ? `<span class="tag">${escapeHTML(entry.country)}</span>` : '';
+
+  const links = [
+    entry.trailerUrl ? `<a class="btn btn-ghost btn-sm" style="display:inline-block;text-decoration:none" href="${escapeAttr(entry.trailerUrl)}" target="_blank" rel="noopener">▶ Trailer</a>` : '',
+    entry.imdbId ? `<a class="btn btn-ghost btn-sm" style="display:inline-block;text-decoration:none" href="https://www.imdb.com/title/${escapeAttr(entry.imdbId)}/" target="_blank" rel="noopener">IMDb</a>` : '',
+    entry.justwatchUrl ? `<a class="btn btn-ghost btn-sm" style="display:inline-block;text-decoration:none" href="${escapeAttr(entry.justwatchUrl)}" target="_blank" rel="noopener">JustWatch</a>` : ''
+  ].filter(Boolean).join('');
 
   document.getElementById('dm-body').innerHTML = `
     <div class="modal-poster">
@@ -913,10 +927,12 @@ function openDetailModal(entry, isNew=false) {
     <div class="modal-info">
       <div class="modal-title">${escapeHTML(entry.title)}</div>
       ${entry.originalTitle && entry.originalTitle !== entry.title ? `<div style="color:var(--text-muted);font-size:13px">${escapeHTML(entry.originalTitle)}</div>` : ''}
-      <div class="modal-tags">${typeTag}${yearTag}${genreTags}${dirTag}</div>
+      <div class="modal-tags">${typeTag}${yearTag}${genreTags}${dirTag}${seasonsTag}${sagaTag}${countryTag}</div>
       ${scoreHtml ? `<div class="modal-scores">${scoreHtml}</div>` : ''}
+      ${links ? `<div style="display:flex;gap:8px;flex-wrap:wrap">${links}</div>` : ''}
       ${entry.overview ? `<div class="modal-overview">${escapeHTML(entry.overview)}</div>` : ''}
       ${entry.cast && entry.cast.length ? `<div style="font-size:12px;color:var(--text-muted)">Con: ${escapeHTML(entry.cast.join(', '))}</div>` : ''}
+      ${entry.lastWatched ? `<div style="font-size:12px;color:var(--text-muted)">Última vez visto: ${escapeHTML(entry.lastWatched)}</div>` : ''}
 
       <div class="modal-fields">
         <div class="field-group">
@@ -1055,13 +1071,49 @@ function populateGenreFilter() {
     genres.map(g => `<option value="${escapeAttr(g)}" ${g===cur?'selected':''}>${escapeHTML(g)}</option>`).join('');
 }
 
-// ─── EXPORT ───────────────────────────────────────────────────────
+// ─── EXPORT / IMPORT ──────────────────────────────────────────────
 function exportJSON() {
   const blob = new Blob([JSON.stringify(collection, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = FILENAME;
   a.click();
+}
+
+async function importJSON(event) {
+  const file = event.target.files[0];
+  event.target.value = '';
+  if (!file) return;
+
+  let data;
+  try {
+    data = JSON.parse(await file.text());
+  } catch (e) {
+    showToast('Archivo no válido: ' + e.message);
+    return;
+  }
+  if (!Array.isArray(data)) {
+    showToast('El JSON debe ser un array de entradas');
+    return;
+  }
+
+  const key = e => e.tmdbId + '::' + e.mediaType;
+  const existing = new Set(collection.map(key));
+  const now = new Date().toISOString();
+  let added = 0;
+  data.forEach(entry => {
+    if (existing.has(key(entry))) return;
+    collection.push({ ...entry, id: entry.id ?? (Date.now() + added), addedAt: entry.addedAt || now });
+    existing.add(key(entry));
+    added++;
+  });
+
+  if (added > 0) {
+    populateGenreFilter();
+    renderGrid();
+    await saveToDrive();
+  }
+  showToast(added > 0 ? `Importados ${added} títulos` : 'No había títulos nuevos que importar');
 }
 
 // ─── UTILS ────────────────────────────────────────────────────────

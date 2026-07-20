@@ -1,3 +1,6 @@
 .DS_Store
 media_brain/
 *.code-workspace
+*ExportBlock*.zip
+watchlist.html
+mi-watchlist-notion.json
