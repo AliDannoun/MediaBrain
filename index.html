@@ -1050,6 +1050,19 @@ function apiTypeOf(entry) {
   return (entry.mediaType === 'tv' || entry.mediaType === 'anime') ? 'tv' : 'movie';
 }
 
+const genreMapCache = {};
+async function getGenreMap(apiType) {
+  if (genreMapCache[apiType]) return genreMapCache[apiType];
+  try {
+    const data = await tmdbFetch(`/genre/${apiType}/list?language=es-ES`);
+    const map = new Map((data.genres || []).map(g => [g.id, g.name]));
+    genreMapCache[apiType] = map;
+    return map;
+  } catch (e) {
+    return new Map();
+  }
+}
+
 async function selectTMDBResult(tmdbId, mediaType, titleHint) {
   closeModal('search-modal');
   showToast('Cargando datos…');
@@ -1170,8 +1183,8 @@ async function loadRecommendations(entry) {
   );
 
   // Blend TMDB's two signals: /similar (genre + keyword overlap) and /recommendations
-  // (its own "people who watched this also watched" model) — matches match on both
-  // are the strongest signal, same approach used on TMDB's own title pages.
+  // (its own "people who watched this also watched" model) — the same layering TMDB's
+  // own title pages use instead of trusting a single endpoint.
   const byId = new Map();
   (similarData.results || []).forEach(r => byId.set(r.id, { ...r, _inSimilar: true }));
   (recoData.results || []).forEach(r => {
@@ -1180,13 +1193,26 @@ async function loadRecommendations(entry) {
     else byId.set(r.id, { ...r, _inRecommendations: true });
   });
 
+  // /recommendations is collaborative ("people who watched X also watched Y") and can
+  // surface titles with no real thematic link — so require an actual genre match unless
+  // both endpoints agree, and drop near-zero-vote titles that are just noise.
+  const genreMap = await getGenreMap(apiType);
+  const sourceGenres = new Set((entry.genres || []).map(g => g.toLowerCase()));
+
   const results = [...byId.values()]
     .filter(r => r.id !== entry.tmdbId)
     .filter(r => !seen.has(r.id + '::' + apiType))
+    .map(r => {
+      const candidateGenres = (r.genre_ids || []).map(id => genreMap.get(id)).filter(Boolean);
+      const genreOverlap = candidateGenres.filter(g => sourceGenres.has(g.toLowerCase())).length;
+      const inBoth = !!(r._inSimilar && r._inRecommendations);
+      return { ...r, _genreOverlap: genreOverlap, _inBoth: inBoth };
+    })
+    .filter(r => r._inBoth || r._genreOverlap > 0)
+    .filter(r => r._inBoth || (r.vote_count || 0) >= 15)
     .sort((a, b) => {
-      const scoreA = (a._inSimilar && a._inRecommendations) ? 1 : 0;
-      const scoreB = (b._inSimilar && b._inRecommendations) ? 1 : 0;
-      if (scoreA !== scoreB) return scoreB - scoreA;
+      if (a._inBoth !== b._inBoth) return b._inBoth - a._inBoth;
+      if (a._genreOverlap !== b._genreOverlap) return b._genreOverlap - a._genreOverlap;
       return (b.vote_average || 0) - (a.vote_average || 0);
     })
     .slice(0, 10);
