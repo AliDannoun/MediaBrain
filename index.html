@@ -185,6 +185,23 @@
 
   .stats strong { color: var(--accent); }
 
+  /* VIEW TOGGLE */
+  .view-toggle { display: flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+
+  .view-toggle-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    padding: 8px 10px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+  }
+
+  .view-toggle-btn + .view-toggle-btn { border-left: 1px solid var(--border); }
+  .view-toggle-btn:hover { color: var(--text); }
+  .view-toggle-btn.active { background: var(--accent-dim); color: var(--accent); }
+
   /* GRID */
   .grid {
     display: grid;
@@ -192,6 +209,63 @@
     gap: 20px;
     padding: 28px 32px;
   }
+
+  /* LIST VIEW */
+  .grid.list-view {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 20px 32px;
+  }
+
+  .list-row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 8px 14px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: border-color 0.15s;
+  }
+
+  .list-row:hover { border-color: var(--accent); }
+
+  .list-row-poster {
+    width: 36px;
+    height: 54px;
+    object-fit: cover;
+    border-radius: 4px;
+    flex-shrink: 0;
+    background: var(--surface2);
+  }
+
+  .list-row-poster-placeholder {
+    width: 36px;
+    height: 54px;
+    border-radius: 4px;
+    flex-shrink: 0;
+    background: var(--surface2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+  }
+
+  .list-row-title { flex: 1; min-width: 0; font-size: 14px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .list-row-meta {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+  }
+
+  .list-row-meta .list-score { color: var(--accent); }
 
   .card {
     position: relative;
@@ -306,7 +380,7 @@
 
   /* MODAL */
   .modal-overlay {
-    display: none;
+    display: flex;
     position: fixed;
     inset: 0;
     background: rgba(0,0,0,0.7);
@@ -315,9 +389,13 @@
     justify-content: center;
     padding: 20px;
     backdrop-filter: blur(4px);
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
   }
 
-  .modal-overlay.open { display: flex; }
+  .modal-overlay.open { opacity: 1; visibility: visible; pointer-events: auto; }
 
   .modal {
     background: var(--surface);
@@ -329,7 +407,11 @@
     overflow-y: auto;
     display: flex;
     flex-direction: column;
+    transform: scale(0.9);
+    transition: transform 0.2s ease;
   }
+
+  .modal-overlay.open .modal { transform: scale(1); }
 
   .modal-header {
     display: flex;
@@ -524,6 +606,9 @@
     header { padding: 14px 16px; }
     .toolbar { padding: 12px 16px; }
     .grid { padding: 16px; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); }
+    .grid.list-view { padding: 12px 16px; }
+    .list-row-meta { gap: 8px; }
+    .list-row-meta .list-genres { display: none; }
     .modal-body { flex-direction: column; }
     .modal-poster { width: 100%; max-width: 180px; margin: 0 auto; }
   }
@@ -591,6 +676,14 @@
       <option value="rating">Mi valoración</option>
       <option value="score">Puntuación TMDB</option>
     </select>
+    <div class="view-toggle">
+      <button class="view-toggle-btn" id="view-btn-grid" title="Vista de cuadrícula" onclick="setViewMode('grid')">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+      </button>
+      <button class="view-toggle-btn" id="view-btn-list" title="Vista de lista" onclick="setViewMode('list')">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></svg>
+      </button>
+    </div>
     <div class="stats" id="stats"></div>
   </div>
 
@@ -659,6 +752,7 @@ let fileId = null;
 let collection = [];
 let currentEntry = null;
 let saveTimer = null;
+let viewMode = localStorage.getItem('view_mode') || 'grid';
 
 const TYPE_LABELS = { movie:'Película', tv:'Serie', documentary:'Documental', anime:'Anime' };
 const STATUS_LABELS = { seen:'Visto', watching:'Viendo', pending:'Pendiente' };
@@ -716,6 +810,7 @@ async function onAuthenticated() {
   document.getElementById('btn-import').style.display = '';
   document.getElementById('drive-status').style.display = 'flex';
   setDriveStatus('ok', 'Conectado');
+  updateViewToggleUI();
   await loadFromDrive();
   renderGrid();
 }
@@ -1002,7 +1097,7 @@ function deleteCurrentEntry() {
 }
 
 function openDetailModal_fromGrid(id) {
-  const entry = collection.find(e => e.id === id);
+  const entry = collection.find(e => String(e.id) === String(id));
   if (entry) openDetailModal(entry, false);
 }
 
@@ -1035,16 +1130,39 @@ function renderGrid() {
   const seen = collection.filter(e=>e.status==='seen').length;
   document.getElementById('stats').innerHTML = `<strong>${seen}</strong>/${total} vistos`;
 
+  grid.classList.toggle('list-view', viewMode === 'list');
+
   if (!items.length) {
     grid.innerHTML = `<div class="empty"><h3>${collection.length ? 'Sin resultados' : 'Tu watchlist está vacía'}</h3><p>${collection.length ? 'Prueba con otros filtros.' : 'Pulsa + Añadir para buscar tu primera película o serie.'}</p></div>`;
     return;
   }
 
   grid.innerHTML = items.map(e => {
-    const poster = posterUrl(e.poster);
+    const idAttr = escapeAttr(String(e.id));
     const stars = e.myRating ? '★'.repeat(e.myRating) : '';
+
+    if (viewMode === 'list') {
+      const poster = posterUrl(e.poster, 'w92');
+      return `
+        <div class="list-row" onclick="openDetailModal_fromGrid('${idAttr}')">
+          ${poster
+            ? `<img class="list-row-poster" src="${poster}" alt="${escapeAttr(e.title)}" loading="lazy">`
+            : `<div class="list-row-poster-placeholder">🎬</div>`}
+          <div class="list-row-title">${escapeHTML(e.title)}</div>
+          <div class="list-row-meta">
+            <span class="tag tag-accent">${TYPE_LABELS[e.mediaType]||e.mediaType}</span>
+            <span class="list-genres">${escapeHTML((e.genres||[]).slice(0,2).join(', '))}</span>
+            <span>${e.year||'—'}</span>
+            <span class="${STATUS_BADGE[e.status]}" style="font-family:var(--mono);font-size:10px;padding:2px 7px;border-radius:3px;text-transform:uppercase;letter-spacing:0.5px">${STATUS_LABELS[e.status]}</span>
+            ${stars ? `<span style="color:var(--accent)">${stars}</span>` : ''}
+            ${e.tmdbScore ? `<span class="list-score">★ ${e.tmdbScore}</span>` : ''}
+          </div>
+        </div>`;
+    }
+
+    const poster = posterUrl(e.poster);
     return `
-      <div class="card" onclick="openDetailModal_fromGrid(${e.id})">
+      <div class="card" onclick="openDetailModal_fromGrid('${idAttr}')">
         <span class="card-badge ${STATUS_BADGE[e.status]}">${STATUS_LABELS[e.status]}</span>
         <span class="card-type">${TYPE_LABELS[e.mediaType]||e.mediaType}</span>
         ${poster
@@ -1069,6 +1187,18 @@ function populateGenreFilter() {
   const cur = sel.value;
   sel.innerHTML = '<option value="">Todos los géneros</option>' +
     genres.map(g => `<option value="${escapeAttr(g)}" ${g===cur?'selected':''}>${escapeHTML(g)}</option>`).join('');
+}
+
+function setViewMode(mode) {
+  viewMode = mode;
+  localStorage.setItem('view_mode', mode);
+  updateViewToggleUI();
+  renderGrid();
+}
+
+function updateViewToggleUI() {
+  document.getElementById('view-btn-grid').classList.toggle('active', viewMode === 'grid');
+  document.getElementById('view-btn-list').classList.toggle('active', viewMode === 'list');
 }
 
 // ─── EXPORT / IMPORT ──────────────────────────────────────────────
