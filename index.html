@@ -698,7 +698,7 @@ function startGoogleAuth() {
       onAuthenticated();
     }
   });
-  tokenClient.requestAccessToken({ prompt: 'consent' });
+  tokenClient.requestAccessToken({ prompt: '' });
 }
 
 function getClientId() {
