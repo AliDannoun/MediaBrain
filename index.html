@@ -1009,7 +1009,7 @@ function renderTMDBResults(results) {
 
 async function buildEntryFromTMDB(tmdbId, mediaType) {
   const lang = 'es-ES';
-  const detail = await tmdbFetch(`/${mediaType}/${tmdbId}?language=${lang}`);
+  const detail = await tmdbFetch(`/${mediaType}/${tmdbId}?language=${lang}&append_to_response=keywords`);
   const credits = await tmdbFetch(`/${mediaType}/${tmdbId}/credits?language=${lang}`);
 
   const genres = (detail.genres || []).map(g => g.name);
@@ -1017,6 +1017,10 @@ async function buildEntryFromTMDB(tmdbId, mediaType) {
     (detail.original_language === 'ja') ||
     genres.includes('Animation')
   );
+  const keywords = (mediaType === 'movie'
+    ? (detail.keywords?.keywords || [])
+    : (detail.keywords?.results || [])
+  ).map(k => k.name);
 
   return {
     id: Date.now(),
@@ -1028,6 +1032,7 @@ async function buildEntryFromTMDB(tmdbId, mediaType) {
     poster: detail.poster_path,
     overview: detail.overview,
     genres,
+    keywords,
     tmdbScore: detail.vote_average ? +detail.vote_average.toFixed(1) : null,
     runtime: detail.runtime || (detail.episode_run_time && detail.episode_run_time[0]) || null,
     director: mediaType === 'movie'
@@ -1081,6 +1086,11 @@ function openDetailModal(entry, isNew=false) {
     entry.justwatchUrl ? `<a class="btn btn-ghost btn-sm" style="display:inline-block;text-decoration:none" href="${escapeAttr(entry.justwatchUrl)}" target="_blank" rel="noopener">JustWatch</a>` : ''
   ].filter(Boolean).join('');
 
+  const keywordTags = (entry.keywords || []).length
+    ? (entry.keywords.slice(0, 10).map(k => `<span class="tag">${escapeHTML(k)}</span>`).join('')
+        + (entry.keywords.length > 10 ? `<span class="tag">+${entry.keywords.length - 10}</span>` : ''))
+    : '';
+
   document.getElementById('dm-body').innerHTML = `
     <div class="modal-poster">
       ${poster ? `<img src="${posterUrl(entry.poster, 'w342')}" alt="">` : '<div class="modal-poster-ph">🎬</div>'}
@@ -1094,6 +1104,7 @@ function openDetailModal(entry, isNew=false) {
       ${entry.overview ? `<div class="modal-overview">${escapeHTML(entry.overview)}</div>` : ''}
       ${entry.cast && entry.cast.length ? `<div style="font-size:12px;color:var(--text-muted)">Con: ${escapeHTML(entry.cast.join(', '))}</div>` : ''}
       ${entry.lastWatched ? `<div style="font-size:12px;color:var(--text-muted)">Última vez visto: ${escapeHTML(entry.lastWatched)}</div>` : ''}
+      ${keywordTags ? `<div style="display:flex;flex-wrap:wrap;gap:6px">${keywordTags}</div>` : ''}
 
       <div class="modal-fields">
         <div class="field-group">
@@ -1138,9 +1149,12 @@ async function loadRecommendations(entry) {
   if (!container || !entry.tmdbId) return;
 
   const apiType = apiTypeOf(entry);
-  let data;
+  let similarData, recoData;
   try {
-    data = await tmdbFetch(`/${apiType}/${entry.tmdbId}/similar?language=es-ES`);
+    [similarData, recoData] = await Promise.all([
+      tmdbFetch(`/${apiType}/${entry.tmdbId}/similar?language=es-ES`),
+      tmdbFetch(`/${apiType}/${entry.tmdbId}/recommendations?language=es-ES`)
+    ]);
   } catch (e) {
     return;
   }
@@ -1155,10 +1169,27 @@ async function loadRecommendations(entry) {
     collection.map(x => [x.tmdbId + '::' + apiTypeOf(x), x])
   );
 
-  const results = (data.results || [])
+  // Blend TMDB's two signals: /similar (genre + keyword overlap) and /recommendations
+  // (its own "people who watched this also watched" model) — matches match on both
+  // are the strongest signal, same approach used on TMDB's own title pages.
+  const byId = new Map();
+  (similarData.results || []).forEach(r => byId.set(r.id, { ...r, _inSimilar: true }));
+  (recoData.results || []).forEach(r => {
+    const existing = byId.get(r.id);
+    if (existing) existing._inRecommendations = true;
+    else byId.set(r.id, { ...r, _inRecommendations: true });
+  });
+
+  const results = [...byId.values()]
     .filter(r => r.id !== entry.tmdbId)
     .filter(r => !seen.has(r.id + '::' + apiType))
-    .slice(0, 8);
+    .sort((a, b) => {
+      const scoreA = (a._inSimilar && a._inRecommendations) ? 1 : 0;
+      const scoreB = (b._inSimilar && b._inRecommendations) ? 1 : 0;
+      if (scoreA !== scoreB) return scoreB - scoreA;
+      return (b.vote_average || 0) - (a.vote_average || 0);
+    })
+    .slice(0, 10);
 
   if (!results.length) { container.innerHTML = ''; return; }
 
