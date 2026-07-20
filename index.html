@@ -702,19 +702,7 @@ function startGoogleAuth() {
 }
 
 function getClientId() {
-  // El usuario debe configurar su propio Client ID de Google Cloud
-  const stored = localStorage.getItem('google_client_id');
-  if (stored) return stored;
-  const id = prompt(
-    'Para conectar Google Drive necesitas un Client ID de Google Cloud.\n\n' +
-    '1. Ve a console.cloud.google.com\n' +
-    '2. Crea un proyecto → APIs → Drive API → Credenciales → OAuth 2.0\n' +
-    '3. Tipo: Aplicación web. Añade el origen de esta página como origen autorizado.\n\n' +
-    'Pega tu Client ID aquí:'
-  );
-  if (id) { localStorage.setItem('google_client_id', id); return id; }
-  showToast('Necesitas un Client ID de Google');
-  return '';
+  return '553857113720-8dtoi07orobmm5ta7ngftih3d105elln.apps.googleusercontent.com';
 }
 
 async function onAuthenticated() {
